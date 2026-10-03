@@ -8,9 +8,9 @@ from pydantic.alias_generators import to_camel
 # Champs repris dans le texte du prompt (rôle, tâche) : une seule ligne, sans chevrons, pour
 # qu'une valeur ne puisse ni introduire de balise ni ajouter de consigne.
 InlineText = Annotated[
-    str, StringConstraints(min_length=2, max_length=150, pattern=r"^[^<>\r\n]+$")
+    str, StringConstraints(min_length=2, max_length=500, pattern=r"^[^<>\r\n]+$")
 ]
-FreeText = Annotated[str, StringConstraints(max_length=5000)]
+FreeText = Annotated[str, StringConstraints(max_length=200000)]
 
 EXAMPLE_NEED = {
     "title": "Virement interne entre deux comptes",
