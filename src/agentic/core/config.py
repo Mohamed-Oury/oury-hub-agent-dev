@@ -24,6 +24,11 @@ def get_analyses_dir() -> Path:
     return Path(os.getenv("ANALYSES_OUTPUT_DIR", "outputs/analyses"))
 
 
+def get_code_dir() -> Path:
+    """Dossier d'écriture du code généré."""
+    return Path(os.getenv("CODE_OUTPUT_DIR", "outputs/code"))
+
+
 def get_llm_provider() -> str:
     """`ollama` (local) ou `google` (Gemini)."""
     return os.getenv("LLM_PROVIDER", "ollama")
