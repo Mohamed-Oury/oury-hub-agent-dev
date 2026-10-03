@@ -21,7 +21,9 @@ Analyse le besoin de développement « {{ need.title }} », fourni dans la balis
 - Pour un traitement batch, travaille sans écran : aucune sous-tâche IHM_PER, et les paramètres sont lus avec ARG_VAL().
 - Lorsque l'opération modifie plusieurs tables ou plusieurs lignes liées, exige dans les critères d'acceptation une transaction unique : toutes les mises à jour sont validées ensemble ou annulées ensemble.
 - Exige dans les critères d'acceptation des sous-tâches 4GL le contrôle de SQLCA.SQLCODE après chaque ordre SQL.
-- Nomme les fichiers dans `concernedFiles` selon p_cbs_{table}_{suffixe}.4gl pour les programmes et f_cbs_{table}_{suffixe}.per pour les écrans, avec le suffixe cst (consultation), maj (modification), cre (création), bat (batch) ou flx (transfert de flux).
+- Lorsque `<fichier_4gl_existant>` ou `<fichier_per_existant>` est fourni dans le besoin, analyse le code source existant et spécifie les modifications/patchs à appliquer directement sur ces fichiers dans les sous-tâches 4GL et IHM_PER.
+- Pour tout formulaire `.per` (création ou modification), génère exclusivement des écrans web interactifs utilisant les conteneurs de mise en page modernes Genero / Informix 4GL Web (`LAYOUT` avec `GRID`, `TABLE`, `FOLDER` / `PAGE`, `HBOX`, `VBOX`), en proscrivant les écrans caractères fixes obsolètes.
+- Nomme les fichiers dans `concernedFiles` selon les noms de fichiers existants lorsqu'ils sont fournis, ou sinon selon p_cbs_{table}_{suffixe}.4gl pour les programmes et f_cbs_{table}_{suffixe}.per pour les écrans, avec le suffixe cst (consultation), maj (modification), cre (création), bat (batch) ou flx (transfert de flux).
 - Exprime `estimation` en jours, par pas d'une demi-journée : « 0.5 jour », « 1 jour », « 1.5 jour ».
 - Rédige en français.
 
@@ -282,4 +284,14 @@ Dans chacun de ces cas, donne à `statut` la valeur `REFUSE`, explique le motif 
   </donnees_entree>
   <version_amplitude>{{ need.amplitude_version | tags }}</version_amplitude>
   <environnement_technique>{{ need.technical_environment | tags }}</environnement_technique>
+{% if need.existing_4gl_content %}
+  <fichier_4gl_existant nom="{{ need.existing_4gl_file_name | default('programme.4gl') | tags }}">
+{{ need.existing_4gl_content | tags }}
+  </fichier_4gl_existant>
+{% endif %}
+{% if need.existing_per_content %}
+  <fichier_per_existant nom="{{ need.existing_per_file_name | default('ecran.per') | tags }}">
+{{ need.existing_per_content | tags }}
+  </fichier_per_existant>
+{% endif %}
 </besoin>

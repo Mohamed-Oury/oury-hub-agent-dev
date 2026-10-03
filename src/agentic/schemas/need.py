@@ -55,6 +55,18 @@ class DevelopmentNeedInput(BaseModel):
     )
     amplitude_version: InlineText = Field(description="Version d'Amplitude ciblée.")
     technical_environment: InlineText = Field(description="Environnement technique.")
+    existing_4gl_file_name: InlineText | None = Field(
+        default=None, description="Nom du fichier .4gl existant à modifier."
+    )
+    existing_4gl_content: FreeText | None = Field(
+        default=None, description="Contenu du code source .4gl existant."
+    )
+    existing_per_file_name: InlineText | None = Field(
+        default=None, description="Nom du fichier .per existant à modifier."
+    )
+    existing_per_content: FreeText | None = Field(
+        default=None, description="Contenu du masque d'écran .per existant."
+    )
 
 
 class PromptResponse(BaseModel):

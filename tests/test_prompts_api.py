@@ -121,3 +121,33 @@ def test_missing_field_is_rejected(client: TestClient, need: dict[str, Any]) -> 
 )
 def test_slugify(title: str, expected: str) -> None:
     assert slugify(title) == expected
+
+
+def test_prompt_includes_existing_4gl_and_per_files(
+    client: TestClient, need: dict[str, Any]
+) -> None:
+    need["existing4GlFileName"] = "p_cbs_virement_mod.4gl"
+    need["existing4GlContent"] = "MAIN\n    DISPLAY 'Ancien Code 4GL'\nEND MAIN"
+    need["existingPerFileName"] = "f_cbs_virement_mod.per"
+    need["existingPerContent"] = "LAYOUT\n    GRID\n    { [f00 ] }\n    END\nEND"
+
+    prompt = client.post(GENERATE, json=need).json()["system_prompt"]
+
+    assert '<fichier_4gl_existant nom="p_cbs_virement_mod.4gl">' in prompt
+    assert "DISPLAY 'Ancien Code 4GL'" in prompt
+    assert "</fichier_4gl_existant>" in prompt
+
+    assert '<fichier_per_existant nom="f_cbs_virement_mod.per">' in prompt
+    assert "LAYOUT\n    GRID" in prompt
+    assert "</fichier_per_existant>" in prompt
+
+
+def test_prompt_includes_web_interactive_per_layout_rules(
+    client: TestClient, need: dict[str, Any]
+) -> None:
+    prompt = client.post(GENERATE, json=need).json()["system_prompt"]
+
+    assert "écrans web interactifs" in prompt
+    assert "LAYOUT" in prompt
+    assert "GRID" in prompt
+
