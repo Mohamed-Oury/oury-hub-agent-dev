@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from agentic.api.v1.analyses import router as analyses_router
 from agentic.api.v1.code import router as code_router
+from agentic.api.v1.diagnostic import router as diagnostic_router
 from agentic.api.v1.prompts import router as prompts_router
 from agentic.core import config
 
@@ -15,6 +16,7 @@ app = FastAPI(
 app.include_router(prompts_router)
 app.include_router(analyses_router)
 app.include_router(code_router)
+app.include_router(diagnostic_router)
 
 
 @app.get("/health", tags=["santé"], summary="État du service")
