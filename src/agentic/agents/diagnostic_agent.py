@@ -6,6 +6,10 @@ Applique la règle d'or :
 
 import json
 from typing import Any
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from agentic.agents.analysis_agent import build_chat_model, AgentError
+from agentic.core import config
 from agentic.schemas.diagnostic import (
     DiagnosticHypothesis,
     DiagnosticInput,
@@ -96,13 +100,14 @@ class DiagnosticToolsEngine:
 
 
 class MonetiqueDiagnosticAgent:
-    """Agentic Orchestrator pour le diagnostic des incidents monétiques."""
+    """Agentic Orchestrator pour le diagnostic des incidents monétiques avec connexion LLM & fallback déterministe."""
 
     def __init__(self) -> None:
         self.tools = DiagnosticToolsEngine()
 
     def run_diagnostic(self, input_data: DiagnosticInput) -> DiagnosticResult:
         tools_called = [
+            f"llm_provider:{config.get_llm_provider()}",
             "search_mti",
             "search_de39",
             "search_similar_incidents",
@@ -147,6 +152,29 @@ class MonetiqueDiagnosticAgent:
             ],
             confidence_score=85 if is_gab_dispenser_timeout else 72,
         )
+
+        # Tenter un enrichissement raisonné par le LLM configuré
+        llm_rationale = ""
+        try:
+            llm = build_chat_model()
+            prompt_content = (
+                f"Incident : {input_data.title}\n"
+                f"Domaine : {input_data.domain}\n"
+                f"Symptôme : {input_data.symptom}\n"
+                f"Code erreur : DE39={de39_detected}\n"
+                "Donne une explication concise (2 phrases) du dysfonctionnement monétique probable."
+            )
+            llm_response = llm.invoke([
+                SystemMessage(content="Tu es un sous-système expert en diagnostic monétique ISO 8583."),
+                HumanMessage(content=prompt_content),
+            ])
+            if hasattr(llm_response, "content") and llm_response.content:
+                llm_rationale = str(llm_response.content).strip()
+        except Exception:
+            # Fallback fluide si LLM non démarré ou clé absente
+            llm_rationale = (
+                "Analyse déterministe basée sur les référentiels ISO 8583 et les journaux de transaction."
+            )
 
         # 2. Cartographie du flux
         flow_mapping = [
@@ -258,7 +286,7 @@ class MonetiqueDiagnosticAgent:
                     "Message 0210 délivré à l'ATM sans accusé de délivrance physique",
                     "STAN/RRN identifié en statut de suspension sur l'automate",
                 ],
-                rationale="L'autorisation financière est complète. La rupture est localisée entre l'unité centrale de l'ATM et le module physique de distribution.",
+                rationale=llm_rationale or "L'autorisation financière est complète. La rupture est localisée entre l'unité centrale de l'ATM et le module physique de distribution.",
             ),
             DiagnosticHypothesis(
                 id="H1",
