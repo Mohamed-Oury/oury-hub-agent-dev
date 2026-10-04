@@ -91,6 +91,7 @@ class DiagnosticHypothesis(BaseModel):
         default="PROPOSED", description="Statut de validation de l'hypothèse."
     )
     evidence_count: int = Field(default=0, description="Nombre de preuves appuyant l'hypothèse.")
+    contradiction_count: int = Field(default=0, description="Nombre de faits contredisant l'hypothèse.")
     evidence_details: list[str] = Field(
         default_factory=list, description="Liste des faits/logs appuyant cette piste."
     )
@@ -98,7 +99,7 @@ class DiagnosticHypothesis(BaseModel):
 
 
 class SimilarIncident(BaseModel):
-    """Incident similaire trouvé dans la base de connaissances."""
+    """Incident similaire trouvé dans la base de connaissances (Référence Historique)."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
@@ -112,7 +113,7 @@ class SimilarIncident(BaseModel):
 
 
 class EvidenceItem(BaseModel):
-    """Elément de preuve collecté par les outils de l'agent."""
+    """Élément de preuve collecté pour l'incident courant."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
@@ -121,6 +122,23 @@ class EvidenceItem(BaseModel):
     content: str = Field(..., description="Contenu lisible de la preuve.")
     is_verified: bool = Field(default=True, description="Vérification effectuée.")
     timestamp: str | None = Field(default=None, description="Horodatage s'il y a lieu.")
+
+
+class EvidenceLedgerItem(BaseModel):
+    """Entrée du registre des preuves avec détection de contradictions."""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    id: str = Field(..., description="ID unique (ex: E01, E02).")
+    information: str = Field(..., description="Énoncé de l'information.")
+    source: str = Field(..., description="Origine (Incident Courant, Log, ISO, KB Historique).")
+    type: Literal["VERIFIED_EVIDENCE", "HYPOTHESIS", "HISTORICAL_REFERENCE", "REJECTED_CONTRADICTION"] = Field(
+        ..., description="Catégorie formelle de l'élément."
+    )
+    status: Literal["VALIDATED_FACT", "HISTORICAL_ONLY", "CONTRADICTION_REJECTED"] = Field(
+        ..., description="Statut de validité dans l'analyse courante."
+    )
+    rationale: str = Field(..., description="Justification de la prise en compte ou de l'élimination.")
 
 
 class RcaProposal(BaseModel):
@@ -170,6 +188,12 @@ class DiagnosticResult(BaseModel):
     hypotheses: list[DiagnosticHypothesis]
     similar_incidents: list[SimilarIncident]
     evidence_list: list[EvidenceItem]
+    evidence_ledger: list[EvidenceLedgerItem] = Field(
+        default_factory=list, description="Registre structuré des preuves et déductions."
+    )
+    contradictions_detected: list[str] = Field(
+        default_factory=list, description="Liste des contradictions détectées et éliminées."
+    )
     rca_proposal: RcaProposal
     tools_called: list[str] = Field(
         default_factory=list, description="Liste des outils de diagnostic invoqués."
