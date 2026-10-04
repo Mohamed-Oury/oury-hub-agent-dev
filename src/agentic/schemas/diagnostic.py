@@ -1,4 +1,4 @@
-"""Schémas Pydantic pour le Monétique Diagnostic Copilot Agent."""
+"""Schémas Pydantic pour le Monétique Diagnostic Copilot Agent (Investigation Agentic Disciplinée)."""
 
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
@@ -42,7 +42,7 @@ class DiagnosticInput(BaseModel):
     )
     raw_logs: str | None = Field(
         default=None,
-        description="Extrait de logs système ou trames ISO 8583 brutes.",
+        description="Extrait de logs système, trames ISO 8583 brutes ou nouveaux logs d'investigation.",
     )
     scope: str | None = Field(
         default=None,
@@ -80,20 +80,26 @@ class TimelineEvent(BaseModel):
 
 
 class DiagnosticHypothesis(BaseModel):
-    """Hypothèse formulée par l'agent de diagnostic."""
+    """Hypothèse formulée par l'agent avec score d'appui et décomposition des causes."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     id: str = Field(..., description="Identifiant unique (ex: H1, H2).")
     title: str = Field(..., description="Intitulé de l'hypothèse.")
-    proba_percent: int = Field(..., ge=0, le=100, description="Probabilité estimée en %.")
+    confidence_level: Literal["TRÈS ÉLEVÉE", "ÉLEVÉE", "MOYENNE", "FAIBLE"] = Field(
+        ..., description="Évaluation rigoureuse du niveau de confiance."
+    )
+    supporting_evidence_count: int = Field(default=0, description="Nombre de preuves appuyant l'hypothèse.")
+    contradicting_evidence_count: int = Field(default=0, description="Nombre de faits la contredisant.")
+    missing_evidence_count: int = Field(default=0, description="Nombre de preuves manquantes.")
     status: Literal["PROPOSED", "INVESTIGATING", "SUPPORTED", "CONFIRMED", "REJECTED"] = Field(
         default="PROPOSED", description="Statut de validation de l'hypothèse."
     )
-    evidence_count: int = Field(default=0, description="Nombre de preuves appuyant l'hypothèse.")
-    contradiction_count: int = Field(default=0, description="Nombre de faits contredisant l'hypothèse.")
     evidence_details: list[str] = Field(
         default_factory=list, description="Liste des faits/logs appuyant cette piste."
+    )
+    potential_causes: list[str] = Field(
+        default_factory=list, description="Causes techniques sous-jacentes possibles."
     )
     rationale: str = Field(..., description="Explication du raisonnement agentic.")
 
@@ -125,20 +131,20 @@ class EvidenceItem(BaseModel):
 
 
 class EvidenceLedgerItem(BaseModel):
-    """Entrée du registre des preuves avec détection de contradictions."""
+    """Entrée normalisée du registre des preuves avec typage strict."""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     id: str = Field(..., description="ID unique (ex: E01, E02).")
     information: str = Field(..., description="Énoncé de l'information.")
-    source: str = Field(..., description="Origine (Incident Courant, Log, ISO, KB Historique).")
-    type: Literal["VERIFIED_EVIDENCE", "HYPOTHESIS", "HISTORICAL_REFERENCE", "REJECTED_CONTRADICTION"] = Field(
-        ..., description="Catégorie formelle de l'élément."
+    source: str = Field(..., description="Origine (Incident Courant, Agent Inférence, ISO, KB Historique).")
+    type: Literal["VERIFIED_EVIDENCE", "INFERENCE", "HISTORICAL_REFERENCE", "REJECTED_CONTRADICTION"] = Field(
+        ..., description="Catégorie formelle normalisée de l'élément."
     )
-    status: Literal["VALIDATED_FACT", "HISTORICAL_ONLY", "CONTRADICTION_REJECTED"] = Field(
+    status: Literal["VALIDATED_FACT", "HYPOTHESIS_INFERENCE", "HISTORICAL_ONLY", "CONTRADICTION_REJECTED"] = Field(
         ..., description="Statut de validité dans l'analyse courante."
     )
-    rationale: str = Field(..., description="Justification de la prise en compte ou de l'élimination.")
+    rationale: str = Field(..., description="Justification de la prise en compte ou du rejet.")
 
 
 class RcaProposal(BaseModel):
@@ -151,8 +157,8 @@ class RcaProposal(BaseModel):
         default="PROPOSED_UNCONFIRMED",
         description="Garde-fou humain : statut d'approbation par l'opérateur.",
     )
-    confidence_level: Literal["ÉLEVÉ", "MOYEN", "FAIBLE"] = Field(
-        default="MOYEN", description="Degré de certitude de l'agent."
+    confidence_level: Literal["TRÈS ÉLEVÉE", "ÉLEVÉE", "MOYENNE", "FAIBLE"] = Field(
+        default="MOYENNE", description="Degré de certitude de l'agent."
     )
     recommended_actions: list[str] = Field(
         default_factory=list, description="Actions curatives recommandées."
@@ -184,6 +190,9 @@ class DiagnosticResult(BaseModel):
     initial_analysis: InitialAnalysis
     flow_mapping: list[TransactionHop]
     breakpoint_analysis: str
+    potential_technical_causes: list[str] = Field(
+        default_factory=list, description="Causes techniques sous-jacentes identifiées au point de rupture."
+    )
     timeline: list[TimelineEvent]
     hypotheses: list[DiagnosticHypothesis]
     similar_incidents: list[SimilarIncident]
@@ -193,6 +202,12 @@ class DiagnosticResult(BaseModel):
     )
     contradictions_detected: list[str] = Field(
         default_factory=list, description="Liste des contradictions détectées et éliminées."
+    )
+    missing_evidence: list[str] = Field(
+        default_factory=list, description="Checklist des preuves manquantes indispensables pour valider la RCA."
+    )
+    next_investigation_step: str = Field(
+        ..., description="Prochaine action d'investigation recommandée à l'opérateur."
     )
     rca_proposal: RcaProposal
     tools_called: list[str] = Field(

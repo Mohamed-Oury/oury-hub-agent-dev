@@ -1,10 +1,10 @@
-"""Agent de diagnostic monétique agentic avec Grounding Rules & Contradiction Detector.
+"""Agent de diagnostic monétique agentic avec Investigation Disciplinée & Grounding Rules.
 
-Applique les règles d'ancrage strictes :
-1. L'agent ne peut utiliser comme preuve QUE les données de l'incident courant.
-2. Une information issue d'un incident similaire de la Knowledge Base est une "Référence Historique", jamais une "Preuve".
-3. Un filtre de contradiction élimine toute assertion contradictoire (ex: DE39=00 vs DE39=91).
-4. « L’agent propose et raisonne. Le moteur de diagnostic contrôle le processus. L’opérateur valide la conclusion. »
+Règles fondatrices :
+1. Strict Ancrage (Grounding) : Les faits passés KB sont des "Références Historiques", jamais des "Preuves".
+2. Normalisation des Preuves : Les inférences de l'agent (ex: E04) sont typées INFERENCE, pas Référence KB.
+3. Transparence : Utilisation de scores d'appui (Supporting / Contradicting / Missing) au lieu de pourcentages.
+4. Tracker de Preuves Manquantes & Inférence itérative.
 """
 
 import json
@@ -100,7 +100,7 @@ class DiagnosticToolsEngine:
 
 
 class MonetiqueDiagnosticAgent:
-    """Agentic Orchestrator avec Grounding Rules et Contradiction Detector."""
+    """Agentic Orchestrator avec Investigation Disciplinée & Grounding Rules."""
 
     def __init__(self) -> None:
         self.tools = DiagnosticToolsEngine()
@@ -118,7 +118,7 @@ class MonetiqueDiagnosticAgent:
 
         full_text = f"{input_data.title} {input_data.symptom} {input_data.facts or ''} {input_data.error_code or ''} {input_data.raw_logs or ''}".lower()
 
-        # DÉTECTION DU NŒUD DE RUPTURE D'APRÈS LES FAITS RÉELS
+        # DÉTECTION DU NŒUD DE RUPTURE D'APRÈS LES FAITS RÉELS DE L'INCIDENT COURANT
         is_payway_host_timeout = (
             "payway -> host" in full_text
             or "payway vers host" in full_text
@@ -143,12 +143,12 @@ class MonetiqueDiagnosticAgent:
         contradictions_detected = []
         if is_payway_host_timeout:
             contradictions_detected.append(
-                "⚠️ CONTRADICTION ÉLIMINÉE : Assertion DE39=00 (Accord accordé) rejetée car en contradiction "
-                "directe avec l'incident courant (DE39=91 - Payway -> Host TIMEOUT)."
+                "⚠️ CONTRADICTION ÉLIMINÉE : Assertion DE39=00 (Accord accordé) rejetée. "
+                "Non applicable à l'incident courant (DE39=91 - Payway -> Host TIMEOUT)."
             )
             contradictions_detected.append(
-                "⚠️ CONTRADICTION ÉLIMINÉE : Assertion Cash Dispenser ATM rejetée. "
-                "La rupture est localisée en amont sur le flux Payway ➜ Host."
+                "⚠️ CONTRADICTION ÉLIMINÉE : Assertion Cash Dispenser ATM (INC-024) rejetée. "
+                "La rupture se situe en amont sur la liaison Payway ➜ Host."
             )
 
         # 2. CLASSIFICATION INITIALE & CONTEXTE
@@ -158,7 +158,7 @@ class MonetiqueDiagnosticAgent:
             probable_type=f"Demande de retrait financier ({mti_info['mti']})",
             potential_mti=mti_detected,
             symptom_summary=(
-                "Rejets massifs après timeout Payway vers Host. Le Host ne répond pas dans le délai (DE39=91)."
+                "Rejets massifs après timeout Payway vers Host. Le Host ne répond pas dans le délai (DE39=91 sur 86% des cas)."
                 if is_payway_host_timeout
                 else f"Délai d'attente expiré ou interruption constatée. Code réponse associé : DE39={de39_detected} ({de39_info['description']})"
             ),
@@ -188,7 +188,7 @@ class MonetiqueDiagnosticAgent:
                     component="Switch Payway",
                     status="OK",
                     timestamp="10:15:01.025",
-                    details="Trame ISO 8583 parsée. Tentative d'acheminement vers le Host.",
+                    details="Trame ISO 8583 parsée. Envoi de la requête vers le Host émetteur.",
                     mti="0200",
                 ),
                 TransactionHop(
@@ -210,7 +210,7 @@ class MonetiqueDiagnosticAgent:
                     component="ATM / Automate",
                     status="ERROR",
                     timestamp="10:15:26.050",
-                    details="Le Switch retourne un abandon avec DE39=91 (Émetteur inaccessible).",
+                    details="Restitution d'un abandon client avec DE39=91 (Émetteur inaccessible).",
                     mti="0210",
                     de39="91",
                 ),
@@ -222,7 +222,7 @@ class MonetiqueDiagnosticAgent:
                     destination="PAYWAY",
                     mti="0200",
                     status="SUCCESS",
-                    description="Émission de la demande de retrait 0200 pour un montant de 50 000 XOF",
+                    description="Émission de la demande de retrait 0200 (50 000 XOF)",
                 ),
                 TimelineEvent(
                     time="10:15:01.025",
@@ -253,7 +253,23 @@ class MonetiqueDiagnosticAgent:
             ]
             breakpoint_analysis = (
                 "Rupture sur la liaison Payway ➜ Host : Payway émet la demande 0200 mais le Host "
-                "ne répond pas dans le délai imparti (86% des transactions en DE39=91)."
+                "ne répond pas dans le délai imparti de 25 secondes."
+            )
+            potential_technical_causes = [
+                "1. Indisponibilité du service applicatif d'autorisation Host",
+                "2. Saturation du pool de connexions TCP vers le Host (MAX_CONNECTIONS dépassé)",
+                "3. Interruption / congestion sur le lien réseau WAN Payway ➜ Host",
+                "4. Verrou logique / blocage interne du processus d'autorisation Host",
+            ]
+            missing_evidence = [
+                "□ Logs applicatifs et état des processus d'autorisation du Host émetteur",
+                "□ Capture des connexions TCP actives et niveau de saturation du pool Host",
+                "□ Mesure de la latence réseau (Ping / Sonde ICMP Payway ➜ Host)",
+                "□ Extrait des journaux Host correspondant aux STANs en timeout (ex: STAN 739214)",
+            ]
+            next_investigation_step = (
+                "Demander à l'opérateur d'injecter les logs applicatifs du Host ou l'état du pool TCP "
+                "pour le STAN 739214 afin de trancher la cause exacte parmi les 4 causes possibles."
             )
         else:
             flow_mapping = [
@@ -328,43 +344,59 @@ class MonetiqueDiagnosticAgent:
                 "Rupture postérieure à l'autorisation financière : Le Host a accordé l'accord (DE39=00), "
                 "mais l'automate GAB a échoué à finaliser la distribution physique des billets au niveau du module Cash Dispenser."
             )
+            potential_technical_causes = [
+                "1. Capteur de présence billets (Presenter Sensor) défaillant",
+                "2. Blocage mécanique / embrayage de la cassette billets",
+                "3. Timeout de l'unité centrale de l'ATM après éjection",
+            ]
+            missing_evidence = [
+                "□ Journal physique Electronic Journal (EJ) de l'ATM",
+                "□ Statut de la cassette de rejet de l'automate",
+            ]
+            next_investigation_step = "Consulter le journal physique (EJ) du GAB pour valider le statut du capteur présentateur."
 
-        # 4. FORMULATION ANCRÉE DES HYPOTHÈSES (GROUNDED HYPOTHESES)
+        # 4. FORMULATION ANCRÉE DES HYPOTHÈSES (GROUNDED HYPOTHESES SANS FAUSSES PROBABILITÉS)
         if is_payway_host_timeout:
             hypotheses = [
                 DiagnosticHypothesis(
                     id="H1",
                     title="Indisponibilité ou non-réponse du Host émetteur (Payway ➜ Host)",
-                    proba_percent=86,
+                    confidence_level="TRÈS ÉLEVÉE",
+                    supporting_evidence_count=4,
+                    contradicting_evidence_count=0,
+                    missing_evidence_count=4,
                     status="SUPPORTED",
-                    evidence_count=4,
-                    contradiction_count=0,
                     evidence_details=[
                         "Payway reçoit correctement les trames 0200 depuis les automates GAB",
                         "Payway tente l'expédition vers le Host mais subit un TIMEOUT",
                         "Le Host ne retourne aucune réponse dans le délai imparti de 25s",
-                        "86% des transactions en échec présentent le code retour DE39=91",
+                        "DE39=91 observé sur 86% des transactions en échec",
                     ],
+                    potential_causes=potential_technical_causes,
                     rationale="Le flux s'interrompt formellement lors du saut Payway ➜ Host. Le Host ne renvoie pas de réponse ISO 0210.",
                 ),
                 DiagnosticHypothesis(
                     id="H2",
                     title="Saturation de la socket TCP / Sonde réseau Payway vers Host",
-                    proba_percent=14,
+                    confidence_level="MOYENNE",
+                    supporting_evidence_count=1,
+                    contradicting_evidence_count=0,
+                    missing_evidence_count=3,
                     status="INVESTIGATING",
-                    evidence_count=1,
-                    contradiction_count=0,
                     evidence_details=["Volumétrie élevée (1 240 transactions dont 1 037 en timeout)"],
+                    potential_causes=["Pool de connexions TCP à 100% de sa capacité"],
                     rationale="La file d'attente TCP Payway vers le Host pourrait être saturée.",
                 ),
                 DiagnosticHypothesis(
                     id="H4",
                     title="Défaut Cash Dispenser ATM (REJECTED - Contradiction)",
-                    proba_percent=0,
+                    confidence_level="FAIBLE",
+                    supporting_evidence_count=0,
+                    contradicting_evidence_count=2,
+                    missing_evidence_count=0,
                     status="REJECTED",
-                    evidence_count=0,
-                    contradiction_count=2,
                     evidence_details=[],
+                    potential_causes=[],
                     rationale="REJETÉ : Contradiction formelle. Le problème survient en amont sur le lien Host (DE39=91), le dispenser de l'ATM est hors de cause.",
                 ),
             ]
@@ -373,30 +405,34 @@ class MonetiqueDiagnosticAgent:
                 DiagnosticHypothesis(
                     id="H4",
                     title="Défaut mécanique ou timeout du Cash Dispenser ATM",
-                    proba_percent=74,
+                    confidence_level="ÉLEVÉE",
+                    supporting_evidence_count=3,
+                    contradicting_evidence_count=0,
+                    missing_evidence_count=2,
                     status="SUPPORTED",
-                    evidence_count=3,
-                    contradiction_count=0,
                     evidence_details=[
                         "Trame 0200 reçue et traitée avec succès par Payway",
                         "Le Host Core Banking a répondu DE39=00 (Autorisation accordée)",
                         "Message 0210 délivré à l'ATM sans confirmation de distribution",
                     ],
+                    potential_causes=potential_technical_causes,
                     rationale="L'autorisation financière est complète. La rupture est localisée entre l'unité centrale et le module physique.",
                 ),
                 DiagnosticHypothesis(
                     id="H1",
                     title="Timeout réseau Payway ➜ Host (REJECTED)",
-                    proba_percent=0,
+                    confidence_level="FAIBLE",
+                    supporting_evidence_count=0,
+                    contradicting_evidence_count=1,
+                    missing_evidence_count=0,
                     status="REJECTED",
-                    evidence_count=0,
-                    contradiction_count=1,
                     evidence_details=[],
+                    potential_causes=[],
                     rationale="REJETÉ : Contradiction avec DE39=00. Le Host a déjà répondu avec succès.",
                 ),
             ]
 
-        # 5. REGISTRE DES PREUVES (EVIDENCE LEDGER)
+        # 5. REGISTRE DES PREUVES NORMALISÉ (NORMALIZED EVIDENCE LEDGER)
         if is_payway_host_timeout:
             evidence_ledger = [
                 EvidenceLedgerItem(
@@ -405,31 +441,31 @@ class MonetiqueDiagnosticAgent:
                     source="Payway Log / Frontal",
                     type="VERIFIED_EVIDENCE",
                     status="VALIDATED_FACT",
-                    rationale="Fait direct de l'incident courant : flux GAB ➜ Payway OK.",
+                    rationale="Preuve directe de l'incident courant : flux GAB ➜ Payway OK.",
                 ),
                 EvidenceLedgerItem(
                     id="E02",
-                    information="Acheminement Payway ➜ Host en TIMEOUT (aucune réponse Host)",
+                    information="Acheminement Payway ➜ Host en TIMEOUT (aucune réponse Host dans les 25s)",
                     source="Syslog Payway / Trace TCP",
                     type="VERIFIED_EVIDENCE",
                     status="VALIDATED_FACT",
-                    rationale="Fait direct : expiration du timer de socket vers le Host émetteur.",
+                    rationale="Preuve directe : expiration du timer de socket vers le Host émetteur.",
                 ),
                 EvidenceLedgerItem(
                     id="E03",
-                    information="86% des transactions en échec affichent le code DE39=91",
+                    information="DE39=91 observé sur 86% des transactions (Origine Host vs Fallback à vérifier)",
                     source="Journal ISO 8583",
                     type="VERIFIED_EVIDENCE",
                     status="VALIDATED_FACT",
-                    rationale="Code retour ISO 8583 généré en fallback par Payway.",
+                    rationale="Code retour d'abandon constaté. L'origine exacte doit être confirmée par les logs Host.",
                 ),
                 EvidenceLedgerItem(
                     id="E04",
-                    information="Indisponibilité du Host émetteur",
+                    information="Indisponibilité ou non-réponse du Host émetteur",
                     source="Agent Diagnostic (Inférence)",
-                    type="HYPOTHESIS",
-                    status="VALIDATED_FACT",
-                    rationale="Déduction logique ancrée appuyée par 4 preuves directes.",
+                    type="INFERENCE",
+                    status="HYPOTHESIS_INFERENCE",
+                    rationale="Inférence logique de l'agent appuyée par E01, E02 et E03.",
                 ),
                 EvidenceLedgerItem(
                     id="E05",
@@ -437,11 +473,11 @@ class MonetiqueDiagnosticAgent:
                     source="Knowledge Base (INC-087)",
                     type="HISTORICAL_REFERENCE",
                     status="HISTORICAL_ONLY",
-                    rationale="Référence historique KB avec 86% de similarité (Non injecté comme preuve).",
+                    rationale="Référence historique KB avec 86% de similarité (Référence uniquement, non injectée comme preuve).",
                 ),
                 EvidenceLedgerItem(
                     id="E06",
-                    information="Assertion DE39=00 et Cash Dispenser ATM",
+                    information="Assertion DE39=00 et Cash Dispenser ATM (INC-024)",
                     source="Référence INC-024 (Contradiction)",
                     type="REJECTED_CONTRADICTION",
                     status="CONTRADICTION_REJECTED",
@@ -500,14 +536,14 @@ class MonetiqueDiagnosticAgent:
         )
         rca_proposal = RcaProposal(
             summary=(
-                "RCA NON CONFIRMÉE : Les éléments d'investigation de l'incident courant indiquent une indisponibilité "
-                "ou non-réponse du Host émetteur sur le flux Payway ➜ Host (86% des transactions rejetées avec DE39=91). "
-                "Une vérification des logs du Host et de la connectivité réseau est nécessaire avant validation par l'opérateur."
+                "RCA NON CONFIRMÉE : Les preuves d'investigation indiquent une forte suspicion d'indisponibilité "
+                "ou de non-réponse du Host émetteur sur le flux Payway ➜ Host (DE39=91 observé sur 86% des cas). "
+                "La confirmation formelle de la cause racine nécessite la vérification des logs applicatifs et des connexions TCP du Host."
                 if is_payway_host_timeout
                 else "RCA NON CONFIRMÉE : La transaction a été autorisée (DE39=00) mais le Cash Dispenser ATM n'a pas confirmé la délivrance des billets."
             ),
             status="PROPOSED_UNCONFIRMED",
-            confidence_level="ÉLEVÉ",
+            confidence_level="ÉLEVÉE",
             recommended_actions=runbooks,
             human_validation_required=True,
         )
@@ -516,6 +552,7 @@ class MonetiqueDiagnosticAgent:
             initial_analysis=initial_analysis,
             flow_mapping=flow_mapping,
             breakpoint_analysis=breakpoint_analysis,
+            potential_technical_causes=potential_technical_causes,
             timeline=timeline,
             hypotheses=hypotheses,
             similar_incidents=[
@@ -525,6 +562,8 @@ class MonetiqueDiagnosticAgent:
             evidence_list=evidence_list,
             evidence_ledger=evidence_ledger,
             contradictions_detected=contradictions_detected,
+            missing_evidence=missing_evidence,
+            next_investigation_step=next_investigation_step,
             rca_proposal=rca_proposal,
             tools_called=tools_called,
         )
