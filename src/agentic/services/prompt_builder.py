@@ -50,3 +50,10 @@ def load_prompt(name: str, directory: Path) -> str | None:
     """Prompt enregistré sous ce nom, ou `None` s'il n'existe pas."""
     path = directory / f"{name}.md"
     return path.read_text(encoding="utf-8") if path.exists() else None
+
+FLEXCUBE_TEMPLATE_NAME = "flexcube_system_prompt.md.j2"
+
+
+def build_flexcube_system_prompt(need: "FlexcubeDevelopmentNeedInput") -> str:
+    from agentic.schemas.flexcube_need import FlexcubeDevelopmentNeedInput
+    return _environment.get_template(FLEXCUBE_TEMPLATE_NAME).render(need=need)

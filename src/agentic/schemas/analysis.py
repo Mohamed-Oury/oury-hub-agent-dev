@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 from pydantic.alias_generators import to_camel
 
 TaskId = Annotated[str, StringConstraints(pattern=r"^TASK-\d{2}$")]
-TaskType = Literal["FONCTIONNEL", "SQL", "IHM_PER", "4GL", "TEST", "DOCUMENTATION"]
+TaskType = Literal["FONCTIONNEL", "SQL", "IHM_PER", "4GL", "PLSQL", "RADPACK", "TEST", "DOCUMENTATION"]
 Priority = Literal["HAUTE", "MOYENNE", "BASSE"]
 TaskStatus = Literal["A_VALIDER", "VALIDE", "REJETE"]
 Decision = Literal["EN_ATTENTE", "REFUSEE", "ACCEPTEE"]
