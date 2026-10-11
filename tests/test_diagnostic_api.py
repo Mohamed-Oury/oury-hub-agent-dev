@@ -184,3 +184,118 @@ def test_diagnostic_scenario_incident_08_cash_dispenser_reversal() -> None:
     assert any("RB-MON-025" in act for act in rca["recommendedActions"])
     assert any("RB-MON-099" in act for act in rca["recommendedActions"])
 
+
+def test_diagnostic_scenario_iso8583_mapping_error() -> None:
+    """Test de l'Incident ISO 8583 / Interface : Message 0200 rejeté par le Host.
+
+    Payway reçoit les trames ATM, mais le Host rejette les messages entrants.
+    Les champs DE32, DE37, DE49 sont manquants ou non construits.
+    RCA attendue : Erreur de mapping/construction du message ISO 8583 entre Payway et Host.
+    """
+    payload = {
+        "title": "Transaction GAB — Message ISO 8583 rejeté par le Host",
+        "domain": "ISO 8583 / Interface",
+        "severity": "HIGH",
+        "symptom": "Payway reçoit correctement les transactions ATM mais le Host rejette les messages entrants. Les transactions restent toutes au niveau du switch.",
+        "facts": "MTI : 0200. DE présents : DE2, DE3, DE4, DE7, DE11, DE41. Le Host attend également : DE32, DE37, DE49 mais ces champs ne sont pas correctement construits.",
+        "scope": "Payway ➜ Host",
+    }
+
+    response = client.post("/api/v1/diagnostic/analyze", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    # 1. Analyse initiale & Localisation du domaine
+    assert "ISO 8583" in data["initialAnalysis"]["detectedDomain"]
+    assert "SWITCH / PAYWAY ➜ HOST" in data["initialAnalysis"]["channel"]
+
+    # 2. Point de rupture : Interface de mapping / Packager ISO 8583
+    assert "mapping" in data["breakpointAnalysis"].lower()
+    assert "DE32" in data["breakpointAnalysis"]
+    assert "DE37" in data["breakpointAnalysis"]
+    assert "DE49" in data["breakpointAnalysis"]
+
+    # 3. Cartographie du flux incluant le saut Packager en ERROR et Host en REJECTED
+    packager_hop = next((hop for hop in data["flowMapping"] if "Packager" in hop["component"]), None)
+    assert packager_hop is not None
+    assert packager_hop["status"] == "ERROR"
+
+    host_hop = next((hop for hop in data["flowMapping"] if "Host" in hop["component"]), None)
+    assert host_hop is not None
+    assert host_hop["status"] == "ERROR"
+
+    # 4. Identification des causes techniques avec les DE précis
+    causes = data["potentialTechnicalCauses"]
+    assert any("DE32" in cause for cause in causes)
+    assert any("DE37" in cause for cause in causes)
+    assert any("DE49" in cause for cause in causes)
+
+    # 5. Hypothèses : H1 (Erreur mapping) SUPPORTED, H3 (Timeout 91) et H4 (Cash Dispenser) REJECTED
+    h1 = next((h for h in data["hypotheses"] if h["id"] == "H1"), None)
+    assert h1 is not None
+    assert h1["status"] == "SUPPORTED"
+    assert h1["confidenceLevel"] == "TRÈS ÉLEVÉE"
+    assert "mapping" in h1["title"].lower()
+
+    h3 = next((h for h in data["hypotheses"] if h["id"] == "H3"), None)
+    assert h3 is not None
+    assert h3["status"] == "REJECTED"
+
+    h4 = next((h for h in data["hypotheses"] if h["id"] == "H4"), None)
+    assert h4 is not None
+    assert h4["status"] == "REJECTED"
+
+    # 6. Registre des preuves normalisé (Evidence Ledger)
+    ledger = data["evidenceLedger"]
+    e01 = next((it for it in ledger if it["id"] == "E01"), None)
+    assert e01 is not None and e01["status"] == "VALIDATED_FACT"  # Trame ATM OK
+
+    e02 = next((it for it in ledger if it["id"] == "E02"), None)
+    assert e02 is not None and e02["status"] == "VALIDATED_FACT"  # Rejet Host
+
+    e03 = next((it for it in ledger if it["id"] == "E03"), None)
+    assert e03 is not None and e03["status"] == "VALIDATED_FACT"  # DE32, DE37, DE49 manquants
+
+    e04 = next((it for it in ledger if it["id"] == "E04"), None)
+    assert e04 is not None and e04["type"] == "INFERENCE"  # Inférence de cause
+
+    # 7. Preuves manquantes pour investigation
+    assert any("dump" in item.lower() or "trame" in item.lower() for item in data["missingEvidence"])
+    assert any("mapping" in item.lower() or "packager" in item.lower() for item in data["missingEvidence"])
+
+    # 8. RCA Proposal attendue
+    rca = data["rcaProposal"]
+    assert rca["humanValidationRequired"] is True
+    assert "Erreur de mapping/construction du message ISO 8583" in rca["summary"]
+    assert "DE32" in rca["summary"]
+    assert "DE37" in rca["summary"]
+    assert "DE49" in rca["summary"]
+
+    # 9. Actions recommandées : Runbooks de mapping ISO
+    assert any("RB-ISO-012" in act for act in rca["recommendedActions"])
+    assert any("RB-ISO-018" in act for act in rca["recommendedActions"])
+    assert any("RB-ISO-025" in act for act in rca["recommendedActions"])
+
+
+def test_diagnostic_scenario_generic_incident() -> None:
+    """Test d'un incident générique du catalogue (ex: HSM ou CBS) pour valider l'extensibilité."""
+    payload = {
+        "title": "HSM — Erreur de vérification PIN Block sur autorisation",
+        "domain": "HSM / Sécurité",
+        "severity": "CRITICAL",
+        "symptom": "Les requêtes de paiement échouent lors de la validation cryptographique du code PIN.",
+        "facts": "Code retour d'erreur de sécurité interne.",
+        "errorCode": "DE39=55",
+        "scope": "Module HSM",
+    }
+
+    response = client.post("/api/v1/diagnostic/analyze", json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert "HSM" in data["initialAnalysis"]["detectedDomain"]
+    assert len(data["flowMapping"]) >= 3
+    assert len(data["hypotheses"]) >= 2
+    assert data["rcaProposal"]["humanValidationRequired"] is True
+
+
