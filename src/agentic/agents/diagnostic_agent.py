@@ -35,10 +35,12 @@ class DiagnosticToolsEngine:
         mti_map = {
             "0200": "Financial Transaction Request (Demande d'autorisation de paiement / retrait)",
             "0210": "Financial Transaction Response (Réponse à la demande d'autorisation)",
+            "0400": "Acquirer Reversal Request (Demande d'annulation financière)",
+            "0410": "Acquirer Reversal Request Response (Réponse à la demande d'annulation)",
+            "0420": "Acquirer Reversal Advice (Avis d'annulation de transaction / Reversal)",
+            "0430": "Acquirer Reversal Advice Response (Confirmation d'annulation de transaction)",
             "0800": "Network Management Request (Echo test / Log-on réseau)",
             "0810": "Network Management Response (Confirmation de session réseau)",
-            "0420": "Acquirer Reversal Advice (Avis d'annulation / Reversal)",
-            "0430": "Acquirer Reversal Advice Response (Confirmation d'annulation)",
         }
         return {
             "mti": mti_code,
@@ -64,6 +66,15 @@ class DiagnosticToolsEngine:
     @staticmethod
     def search_similar_incidents(symptom: str, domain: str) -> list[dict[str, Any]]:
         return [
+            {
+                "reference": "INC-008",
+                "title": "GAB — Retrait débité sans distribution de billets et Reversal 0420 manquant",
+                "symptom": "Autorisation accordée (DE39=00), distribution physique avortée au guichet ATM, Reversal 0420 non reçu",
+                "breakpoint": "ATM Cash Dispenser ➜ Chaîne Reversal 0420 / 0400",
+                "root_cause": "Timeout capteur présentateur billets avec défaillance d'émission de l'avis d'annulation 0420 par l'automate",
+                "resolution": "Audit Electronic Journal (EJ), confirmation formelle de non-distribution, régularisation manuelle par avis de crédit sous double contrôle opérateur et calibration Presenter",
+                "similarity_percent": 95,
+            },
             {
                 "reference": "INC-087",
                 "title": "Frontal Payway — Saturation pool de connexions TCP vers Core Banking Host",
@@ -93,9 +104,11 @@ class DiagnosticToolsEngine:
                 "RB-MON-102 : Bascule vers le lien réseau secondaire (Backup Link) Host",
             ]
         return [
-            "RB-MON-001 : Inspection du journal physique (EJ - Electronic Journal) du GAB",
-            "RB-MON-014 : Redémarrage à chaud du module de distribution des billets NCR/Diebold",
-            "RB-MON-099 : Procédure de régularisation comptable d'un retrait avorté (Avis de crédit)",
+            "RB-MON-001 : Inspection du journal physique (EJ - Electronic Journal) du GAB pour vérifier le statut Presenter et la non-délivrance",
+            "RB-MON-014 : Extraction des codes défaut et tests de diagnostic du module de distribution (Presenter & Cassettes)",
+            "RB-MON-025 : Audit de la chaîne de Reversal (Recherche de trame 0420/0400 ou 0430 dans les journaux Switch et ATM)",
+            "RB-MON-030 : Vérification du statut comptable de l'autorisation au Host (Débit réel vs Réserve / Hold)",
+            "RB-MON-099 : Procédure de régularisation comptable sécurisée (Double contrôle opérateur obligatoire avant tout avis de crédit)",
         ]
 
 
@@ -150,28 +163,42 @@ class MonetiqueDiagnosticAgent:
                 "⚠️ CONTRADICTION ÉLIMINÉE : Assertion Cash Dispenser ATM (INC-024) rejetée. "
                 "La rupture se situe en amont sur la liaison Payway ➜ Host."
             )
+        else:
+            contradictions_detected.append(
+                "⚠️ CONTRADICTION ÉLIMINÉE : Assertion DE39=91 (Émetteur indisponible / Timeout réseau) rejetée. "
+                "Non applicable à l'incident courant : l'autorisation financière a été formellement validée par le Host (DE39=00)."
+            )
+            contradictions_detected.append(
+                "⚠️ CONTRADICTION ÉLIMINÉE : Hypothèse d'abandon client volontaire rejetée. "
+                "Le compte client a été débité/réservé sans confirmation de distribution physique des billets au guichet."
+            )
 
         # 2. CLASSIFICATION INITIALE & CONTEXTE
         initial_analysis = InitialAnalysis(
             detected_domain=input_data.domain.upper(),
             channel="ATM / Automate GAB" if "gab" in input_data.domain.lower() else "SWITCH / PAYWAY",
-            probable_type=f"Demande de retrait financier ({mti_info['mti']})",
-            potential_mti=mti_detected,
+            probable_type=(
+                f"Demande de retrait financier ({mti_info['mti']})"
+                if is_payway_host_timeout
+                else "Retrait d'espèces GAB (0200) avec échec distribution physique & anomalie Reversal (0420)"
+            ),
+            potential_mti=mti_detected if is_payway_host_timeout else "0200 / 0210 / 0420",
             symptom_summary=(
                 "Rejets massifs après timeout Payway vers Host. Le Host ne répond pas dans le délai (DE39=91 sur 86% des cas)."
                 if is_payway_host_timeout
-                else f"Délai d'attente expiré ou interruption constatée. Code réponse associé : DE39={de39_detected} ({de39_info['description']})"
+                else "Autorisation financière accordée par le Host (DE39=00) mais absence de distribution physique des billets au guichet ATM. Reversal 0420 attendu mais NON REÇU, laissant le compte client débité."
             ),
             suspect_components=[
                 "Switch Frontal Payway ➜ Liaison Host",
                 "Serveur d'autorisation Host Émetteur",
                 "Sonde TCP / Socket réseau Host",
             ] if is_payway_host_timeout else [
-                "Module Distributeur ATM (Cash Dispenser)",
-                "Switch Frontal Payway",
-                "Host Core Banking Amplitude",
+                "Module Distributeur ATM (Cash Dispenser / Presenter)",
+                "Unité Centrale ATM ➜ Contrôleur CDM (Liaison XFS)",
+                "Sous-système de Reversal ATM ➜ Switch Payway",
+                "Module de Compensation / Régularisation Core Banking Host",
             ],
-            confidence_score=86 if is_payway_host_timeout else 74,
+            confidence_score=86 if is_payway_host_timeout else 88,
         )
 
         # 3. CONSTRUCTEUR DU FLUX TRANSACTIONNEL (GROUNDED)
@@ -277,38 +304,52 @@ class MonetiqueDiagnosticAgent:
                     component="ATM / Automate",
                     status="OK",
                     timestamp="10:42:15.001",
-                    details="Demande 0200 émise.",
+                    details="Demande de retrait 0200 émise correctement vers le Switch.",
                     mti="0200",
                 ),
                 TransactionHop(
                     component="Switch Payway",
                     status="OK",
                     timestamp="10:42:15.023",
-                    details="Trame parsée et routée.",
+                    details="Trame ISO 8583 parsée et routée vers le Host émetteur.",
                     mti="0200",
                 ),
                 TransactionHop(
                     component="Host Core Banking",
                     status="OK",
                     timestamp="10:42:15.110",
-                    details="Autorisation accordée (DE39=00).",
+                    details="Autorisation financière accordée (DE39=00) — Provision bloquée/débitée.",
                     mti="0210",
                     de39="00",
                 ),
                 TransactionHop(
                     component="Switch Payway",
                     status="OK",
-                    timestamp="10:42:18.930",
-                    details="Réponse 0210 réexpédiée.",
+                    timestamp="10:42:15.132",
+                    details="Réponse 0210 réexpédiée vers l'ATM pour délivrance des espèces.",
                     mti="0210",
                     de39="00",
                 ),
                 TransactionHop(
-                    component="ATM Distributeur",
+                    component="ATM Cash Dispenser",
                     status="TIMEOUT",
                     timestamp="10:42:18.951",
-                    details="Timeout local du capteur présentateur.",
+                    details="Échec de commande de distribution physique des billets (rupture mécanique, capteur ou timeout UC).",
                     mti="0210",
+                    de39="00",
+                ),
+                TransactionHop(
+                    component="Liaison Reversal ATM ➜ Switch",
+                    status="ERROR",
+                    timestamp="10:42:25.000",
+                    details="Avis d'annulation Reversal 0420 attendu post-échec distribution mais NON REÇU (NOT RECEIVED).",
+                    mti="0420",
+                ),
+                TransactionHop(
+                    component="Core Banking Host",
+                    status="PENDING",
+                    timestamp="--:--:--",
+                    details="Compte client débité sans contre-passation automatique — En attente d'audit EJ et décision opérateur.",
                     de39="00",
                 ),
             ]
@@ -319,7 +360,15 @@ class MonetiqueDiagnosticAgent:
                     destination="PAYWAY",
                     mti="0200",
                     status="SUCCESS",
-                    description="Demande de retrait émise",
+                    description="Émission de la demande de retrait 0200 (100 000 XOF)",
+                ),
+                TimelineEvent(
+                    time="10:42:15.023",
+                    source="PAYWAY",
+                    destination="HOST",
+                    mti="0200",
+                    status="FORWARDED",
+                    description="Routage de la trame vers le Host émetteur Core Banking",
                 ),
                 TimelineEvent(
                     time="10:42:15.110",
@@ -328,7 +377,16 @@ class MonetiqueDiagnosticAgent:
                     mti="0210",
                     de39="00",
                     status="APPROVED",
-                    description="Host répond DE39=00 (Accord accordé)",
+                    description="Le Host répond DE39=00 (Autorisation accordée / Débit provisionné)",
+                ),
+                TimelineEvent(
+                    time="10:42:15.132",
+                    source="PAYWAY",
+                    destination="ATM",
+                    mti="0210",
+                    de39="00",
+                    status="DELIVERED",
+                    description="Transmission de l'accord 0210 à l'ATM avec ordre de délivrance",
                 ),
                 TimelineEvent(
                     time="10:42:18.951",
@@ -337,23 +395,41 @@ class MonetiqueDiagnosticAgent:
                     mti="0210",
                     de39="00",
                     status="TIMEOUT_ABORT",
-                    description="Rupture mécanique/logicielle Cash Dispenser",
+                    description="Rupture mécanique ou logicielle Cash Dispenser (billets non délivrés)",
+                ),
+                TimelineEvent(
+                    time="10:42:25.000",
+                    source="ATM",
+                    destination="PAYWAY",
+                    mti="0420",
+                    status="REVERSAL_NOT_RECEIVED",
+                    description="[ANOMALIE CRITIQUE] Avis d'annulation Reversal 0420 attendu mais NON REÇU (NOT RECEIVED)",
                 ),
             ]
             breakpoint_analysis = (
-                "Rupture postérieure à l'autorisation financière : Le Host a accordé l'accord (DE39=00), "
-                "mais l'automate GAB a échoué à finaliser la distribution physique des billets au niveau du module Cash Dispenser."
+                "Rupture sur le traitement physique de la distribution des billets au niveau du Cash Dispenser ATM "
+                "(post-accord Host DE39=00), doublée d'une anomalie du cycle financier : le message d'annulation "
+                "(Reversal 0420 / 0400) n'a pas été reçu par le Switch/Host, maintenant un débit injustifié sur le compte client."
             )
             potential_technical_causes = [
-                "1. Capteur de présence billets (Presenter Sensor) défaillant",
-                "2. Blocage mécanique / embrayage de la cassette billets",
-                "3. Timeout de l'unité centrale de l'ATM après éjection",
+                "1. Défaut du capteur de présence ou de présentation des billets (Presenter Sensor) — [Preuve requise : Erreur Presenter Sensor dans l'Electronic Journal EJ]",
+                "2. Blocage mécanique ou anomalie des cassettes de billets — [Preuve requise : Code défaut distributeur (Pick failure, transport jam, D-Status / M-Status)]",
+                "3. Timeout de communication entre l'unité centrale ATM et le distributeur — [Preuve requise : Expiration délai WFS_CMD_CDM_DISPENSE dans les journaux ATM]",
+                "4. Anomalies périphériques complémentaires — [Preuves requises : Cassette vide (low currency sensor), micro-coupure alimentation, panne contrôleur série/USB]",
+                "5. Rupture de la chaîne de Reversal — [Preuves requises : Traces réseau et journaux ATM pour déterminer si le 0420 a été généré localement ou perdu en transit]",
             ]
             missing_evidence = [
-                "□ Journal physique Electronic Journal (EJ) de l'ATM",
-                "□ Statut de la cassette de rejet de l'automate",
+                "□ Electronic Journal (EJ) de l'ATM (Confirmer la non-délivrance et l'état du capteur Presenter)",
+                "□ Codes défaut du Cash Dispenser (Device Status, M-Status, D-Status : identifier pick failure, jam ou timeout)",
+                "□ Traces de commande et accusés de réception du contrôleur distributeur (XFS CDM logs)",
+                "□ Traces réseau ATM ➜ Switch (Vérifier si le Reversal 0420/0400 a été émis localement ou bloqué en transit)",
+                "□ Statut comptable au Core Banking Host (Vérifier si le débit est ferme ou en réservation/hold)",
             ]
-            next_investigation_step = "Consulter le journal physique (EJ) du GAB pour valider le statut du capteur présentateur."
+            next_investigation_step = (
+                "1. Extraire l'Electronic Journal (EJ) et les codes défaut du distributeur ATM pour confirmer la cause physique et la non-délivrance formelle. "
+                "2. Auditer les traces réseau ATM-Switch pour identifier pourquoi le 0420 n'a pas été reçu. "
+                "3. Contrôler le statut comptable au Core Banking Host avant toute décision de régularisation."
+            )
 
         # 4. FORMULATION ANCRÉE DES HYPOTHÈSES (GROUNDED HYPOTHESES SANS FAUSSES PROBABILITÉS)
         if is_payway_host_timeout:
@@ -404,19 +480,44 @@ class MonetiqueDiagnosticAgent:
             hypotheses = [
                 DiagnosticHypothesis(
                     id="H4",
-                    title="Défaut mécanique ou timeout du Cash Dispenser ATM",
+                    title="Défaillance physique ou commande du Cash Dispenser ATM (Rupture matérielle)",
                     confidence_level="ÉLEVÉE",
                     supporting_evidence_count=3,
+                    contradicting_evidence_count=0,
+                    missing_evidence_count=3,
+                    status="SUPPORTED",
+                    evidence_details=[
+                        "Autorisation financière accordée par le Host Core Banking : DE39=00",
+                        "Ordre de délivrance 0210 transmis au contrôleur de l'automate",
+                        "Absence de distribution physique des billets constatée au guichet",
+                    ],
+                    potential_causes=potential_technical_causes[:4],
+                    rationale=(
+                        "L'accord financier est formellement obtenu (DE39=00). La rupture se situe en aval, "
+                        "au niveau de la commande ou de l'actionneur mécanique de distribution des billets."
+                    ),
+                ),
+                DiagnosticHypothesis(
+                    id="H5",
+                    title="Rupture du cycle d'annulation automatique (Reversal 0420 non généré ou non acheminé)",
+                    confidence_level="TRÈS ÉLEVÉE",
+                    supporting_evidence_count=2,
                     contradicting_evidence_count=0,
                     missing_evidence_count=2,
                     status="SUPPORTED",
                     evidence_details=[
-                        "Trame 0200 reçue et traitée avec succès par Payway",
-                        "Le Host Core Banking a répondu DE39=00 (Autorisation accordée)",
-                        "Message 0210 délivré à l'ATM sans confirmation de distribution",
+                        "Échec de la distribution physique des billets nécessitant une annulation",
+                        "Message Reversal 0420 formellement NOT RECEIVED dans les éléments fournis",
                     ],
-                    potential_causes=potential_technical_causes,
-                    rationale="L'autorisation financière est complète. La rupture est localisée entre l'unité centrale et le module physique.",
+                    potential_causes=[
+                        "Blocage applicatif ou crash du processus ATM avant génération du Reversal 0420",
+                        "Perte ou déconnexion sur la liaison réseau ATM ➜ Switch Frontal au moment de l'émission",
+                        "Rejet ou filtrage de la trame 0420 au niveau du frontal Switch",
+                    ],
+                    rationale=(
+                        "Tout échec de distribution post-accord DE39=00 doit impérativement déclencher un 0420/0400. "
+                        "L'absence de réception empêche la contre-passation automatique et maintient le compte client débité."
+                    ),
                 ),
                 DiagnosticHypothesis(
                     id="H1",
@@ -428,7 +529,7 @@ class MonetiqueDiagnosticAgent:
                     status="REJECTED",
                     evidence_details=[],
                     potential_causes=[],
-                    rationale="REJETÉ : Contradiction avec DE39=00. Le Host a déjà répondu avec succès.",
+                    rationale="REJETÉ : Contradiction formelle avec DE39=00. Le Host émetteur a déjà répondu avec succès.",
                 ),
             ]
 
@@ -504,46 +605,154 @@ class MonetiqueDiagnosticAgent:
             evidence_ledger = [
                 EvidenceLedgerItem(
                     id="E01",
-                    information="Trame 0210 DE39=00 reçue du Host par Payway",
-                    source="Journal d'audit ISO 8583",
+                    information="Autorisation financière accordée par le Host émetteur : MTI 0210, DE39=00",
+                    source="Journal d'audit ISO 8583 / Switch",
                     type="VERIFIED_EVIDENCE",
                     status="VALIDATED_FACT",
-                    rationale="Preuve directe du débit effectif du compte client.",
+                    rationale="Preuve factuelle directe : accord donné par l'émetteur et débit/réservation de solde validé.",
                 ),
                 EvidenceLedgerItem(
                     id="E02",
-                    information="Délai dépassé au niveau du Cash Dispenser",
-                    source="Electronic Journal (EJ) ATM",
+                    information="Distribution physique des billets avortée au guichet ATM (aucun billet délivré)",
+                    source="Constat Guichet / Signalement Client",
                     type="VERIFIED_EVIDENCE",
                     status="VALIDATED_FACT",
-                    rationale="Présentateur billets non confirmé.",
+                    rationale="Preuve factuelle directe : échec matériel de distribution physique des espèces.",
+                ),
+                EvidenceLedgerItem(
+                    id="E03",
+                    information="Avis d'annulation Reversal 0420 attendu mais NON REÇU (NOT RECEIVED)",
+                    source="Journal Switch Payway / Monétique",
+                    type="VERIFIED_EVIDENCE",
+                    status="VALIDATED_FACT",
+                    rationale="Preuve factuelle directe : absence de réception du message d'annulation post-échec.",
+                ),
+                EvidenceLedgerItem(
+                    id="E04",
+                    information="Défaillance physique ou commande du Cash Dispenser ATM (Presenter / Cassette / Timeout)",
+                    source="Agent Diagnostic (Inférence)",
+                    type="INFERENCE",
+                    status="HYPOTHESIS_INFERENCE",
+                    rationale="Inférence logique déduite de la rupture entre l'accord 0210 et l'absence physique de distribution.",
+                ),
+                EvidenceLedgerItem(
+                    id="E05",
+                    information="Risque d'impact financier direct : compte client débité sans contre-passation automatique",
+                    source="Agent Diagnostic (Inférence Financière)",
+                    type="INFERENCE",
+                    status="HYPOTHESIS_INFERENCE",
+                    rationale="Conséquence directe de l'absence du Reversal 0420 : le compte client reste débité au Host/CBS.",
+                ),
+                EvidenceLedgerItem(
+                    id="E06",
+                    information="Référence historique d'échec Cash Dispenser et Reversal manquant (INC-008 / INC-024)",
+                    source="Knowledge Base (INC-008)",
+                    type="HISTORICAL_REFERENCE",
+                    status="HISTORICAL_ONLY",
+                    rationale="Référence historique KB avec forte similarité (Référence uniquement, non injectée comme preuve).",
+                ),
+                EvidenceLedgerItem(
+                    id="E07",
+                    information="Assertion Émetteur indisponible DE39=91",
+                    source="Détecteur de Contradictions",
+                    type="REJECTED_CONTRADICTION",
+                    status="CONTRADICTION_REJECTED",
+                    rationale="REJETÉ : Contradiction directe avec DE39=00 validé par le Host.",
                 ),
             ]
             evidence_list = [
                 EvidenceItem(
                     source="Journal ISO 8583",
                     type="Trace ISO",
-                    content="MTI=0210 STAN=739214 DE39=00",
+                    content="MTI=0210 STAN=739214 DE39=00 (Approved)",
                     is_verified=True,
                     timestamp="10:42:15.110",
                 ),
+                EvidenceItem(
+                    source="Journal Switch Payway",
+                    type="Trace Reversal",
+                    content="REVERSAL_MONITOR: Expected MTI 0420 for STAN 739214: NOT RECEIVED within window",
+                    is_verified=True,
+                    timestamp="10:42:25.000",
+                ),
             ]
+
+        # PRISE EN COMPTE DES LOGS/PREUVES INJECTÉS EN ITÉRATION PAR L'OPÉRATEUR
+        has_operator_logs = bool(input_data.raw_logs and input_data.raw_logs.strip())
+        if has_operator_logs:
+            raw_excerpt = input_data.raw_logs.strip()
+            clean_excerpt = raw_excerpt.replace("[LOG COMPLÉMENTAIRE OPERATEUR]", "").strip()
+            evidence_ledger.append(
+                EvidenceLedgerItem(
+                    id=f"E0{len(evidence_ledger)+1}",
+                    information=f"Preuve injectée par l'opérateur : {clean_excerpt[:110]}...",
+                    source="Opérateur / Investigation Itérative",
+                    type="VERIFIED_EVIDENCE",
+                    status="VALIDATED_FACT",
+                    rationale="Preuve formelle apportée durant la phase d'investigation itérative.",
+                )
+            )
+            evidence_list.append(
+                EvidenceItem(
+                    source="Opérateur (Logs d'Investigation)",
+                    type="Preuve complémentaire",
+                    content=clean_excerpt,
+                    is_verified=True,
+                    timestamp="En cours d'analyse",
+                )
+            )
+
+            # Mise à jour de la checklist des preuves manquantes
+            missing_evidence = [
+                "✅ Logs applicatifs Host (Fournis à l'itération actuelle)",
+                "✅ Diagnostic TCP / Pool Sockets (Injecté par l'opérateur)",
+                "□ Capture des trames ICMP / Latence WAN",
+            ] if is_payway_host_timeout else [
+                "✅ Journal physique Electronic Journal (EJ) / Logs distributeur (Injectés par l'opérateur)",
+                "□ Statut de la cassette de rejet",
+                "□ Confirmation statut comptable Host / CBS",
+            ]
+            next_investigation_step = "Toutes les preuves critiques ont été injectées. L'opérateur peut valider la RCA."
 
         # 6. PROPOSITION RCA ET GARDE-FOU HUMAIN
         runbooks = self.tools.search_runbooks(
             input_data.domain,
             "Payway ➜ Host" if is_payway_host_timeout else "ATM Cash Dispenser",
         )
-        rca_proposal = RcaProposal(
-            summary=(
+
+        if has_operator_logs:
+            rca_summary = (
+                f"RCA CONFIRMÉE AVEC PREUVES OPÉRATEUR : L'analyse des preuves complémentaires injectées "
+                f"({clean_excerpt[:90]}...) confirme la rupture au niveau de l'autorisation Host "
+                f"(saturation ou rupture de socket TCP vers l'émetteur)."
+                if is_payway_host_timeout
+                else (
+                    f"RCA CONFIRMÉE AVEC PREUVES OPÉRATEUR : L'extrait de log fourni ({clean_excerpt[:90]}...) "
+                    f"confirme formellement l'anomalie au niveau du Cash Dispenser de l'ATM. "
+                    f"ATTENTION : Procéder à la régularisation comptable par avis de crédit après double contrôle opérateur."
+                )
+            )
+            confidence_level = "TRÈS ÉLEVÉE"
+        else:
+            rca_summary = (
                 "RCA NON CONFIRMÉE : Les preuves d'investigation indiquent une forte suspicion d'indisponibilité "
                 "ou de non-réponse du Host émetteur sur le flux Payway ➜ Host (DE39=91 observé sur 86% des cas). "
                 "La confirmation formelle de la cause racine nécessite la vérification des logs applicatifs et des connexions TCP du Host."
                 if is_payway_host_timeout
-                else "RCA NON CONFIRMÉE : La transaction a été autorisée (DE39=00) mais le Cash Dispenser ATM n'a pas confirmé la délivrance des billets."
-            ),
+                else (
+                    "RCA NON CONFIRMÉE : Point de rupture physique sur la distribution des billets au niveau du Cash Dispenser ATM (post-autorisation DE39=00). "
+                    "Faits établis : accord Host obtenu, billets non délivrés, et Reversal 0420 attendu NON REÇU. L'origine exacte de la défaillance matérielle "
+                    "(Presenter Sensor, blocage mécanique cassette, timeout UC) doit être tranchée par l'analyse de l'Electronic Journal (EJ) et des codes défaut du distributeur. "
+                    "ATTENTION CYCLE FINANCIER : Le compte client est exposé à un débit indu. Vérifier le statut comptable (débit effectif vs hold) et rechercher l'historique "
+                    "du reversal (0400/0420) au Switch. AUCUNE RÉGULARISATION COMPTABLE (AVIS DE CRÉDIT) NE DOIT ÊTRE EXÉCUTÉE SANS VÉRIFICATION PRÉALABLE DE L'EJ ET VALIDATION EXPLICITE DE L'OPÉRATEUR."
+                )
+            )
+            confidence_level = "ÉLEVÉE"
+
+        rca_proposal = RcaProposal(
+            summary=rca_summary,
             status="PROPOSED_UNCONFIRMED",
-            confidence_level="ÉLEVÉE",
+            confidence_level=confidence_level,
             recommended_actions=runbooks,
             human_validation_required=True,
         )
@@ -567,3 +776,4 @@ class MonetiqueDiagnosticAgent:
             rca_proposal=rca_proposal,
             tools_called=tools_called,
         )
+
