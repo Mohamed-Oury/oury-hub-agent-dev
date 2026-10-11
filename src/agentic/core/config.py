@@ -30,12 +30,12 @@ def get_code_dir() -> Path:
 
 
 def get_llm_provider() -> str:
-    """`ollama` (local) ou `google` (Gemini)."""
-    return os.getenv("LLM_PROVIDER", "ollama")
+    """`google` (Gemini) ou `ollama` (local)."""
+    return os.getenv("LLM_PROVIDER", "google")
 
 
 def get_llm_model() -> str:
-    return os.getenv("LLM_MODEL", "qwen3:14b")
+    return os.getenv("LLM_MODEL", "gemini-2.5-flash")
 
 
 def get_llm_temperature() -> float:
