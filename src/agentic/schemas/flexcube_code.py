@@ -1,5 +1,6 @@
 """Schémas pour la génération de code Oracle FLEXCUBE (PL/SQL, DDL, Tests, Rollback)."""
 
+from typing import Any
 from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pydantic.main import BaseModel
@@ -20,6 +21,9 @@ class FlexcubeGeneratedCodeResult(CamelModel):
     unit_test_plsql: str = Field(description="Script anonyme PL/SQL exécutable de tests unitaires avec assertions.")
     rollback_script: str = Field(description="Script de retour arrière propre (DROP/RESTORE) sans perte de données.")
     deployment_instructions: list[str] = Field(default_factory=list, description="Instructions d'exécution SQL*Plus ou déploiement.")
+    validation_report: dict[str, Any] | None = Field(
+        default=None, description="Rapport de validation syntaxique PL/SQL."
+    )
 
 
 class FlexcubeCodeResponse(CamelModel):
@@ -33,6 +37,7 @@ class FlexcubeCodeResponse(CamelModel):
     unit_test_plsql: str = Field(description="Test unitaire PL/SQL.")
     rollback_script: str = Field(description="Script de rollback.")
     deployment_instructions: list[str] = Field(default_factory=list)
+    validation_report: dict[str, Any] | None = Field(default=None)
     saved_path: str = Field(description="Chemin où le code est enregistré.")
 
     @classmethod
@@ -48,5 +53,6 @@ class FlexcubeCodeResponse(CamelModel):
             unit_test_plsql=result.unit_test_plsql,
             rollback_script=result.rollback_script,
             deployment_instructions=result.deployment_instructions,
+            validation_report=result.validation_report,
             saved_path=saved_path,
         )

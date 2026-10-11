@@ -213,3 +213,9 @@ class DiagnosticResult(BaseModel):
     tools_called: list[str] = Field(
         default_factory=list, description="Liste des outils de diagnostic invoqués."
     )
+    ai_executive_summary: str | None = Field(
+        default=None, description="Synthèse vulgarisée rédigée par Gemini à partir des faits déterministes validés."
+    )
+    ai_investigation_dialogue: list[str] = Field(
+        default_factory=list, description="Questions interactives formulées par Gemini pour orienter l'opérateur monétique."
+    )

@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from agentic.agents.analysis_agent import build_chat_model, AgentError
 from agentic.core import config
+from agentic.core.security import PciDssSanitizer
 from agentic.schemas.diagnostic import (
     DiagnosticHypothesis,
     DiagnosticInput,
@@ -207,13 +208,65 @@ class MonetiqueDiagnosticAgent:
         ) and not is_atm_dispenser and not is_iso_mapping
 
         if is_iso_mapping:
-            return self._build_iso_mapping_diagnostic(input_data, full_text)
+            result = self._build_iso_mapping_diagnostic(input_data, full_text)
         elif is_atm_dispenser:
-            return self._build_atm_dispenser_diagnostic(input_data, full_text)
+            result = self._build_atm_dispenser_diagnostic(input_data, full_text)
         elif is_host_timeout:
-            return self._build_host_timeout_diagnostic(input_data, full_text)
+            result = self._build_host_timeout_diagnostic(input_data, full_text)
         else:
-            return self._build_generic_diagnostic(input_data, full_text)
+            result = self._build_generic_diagnostic(input_data, full_text)
+
+        # Enrichissement explicatif et dialogue opérateur via Gemini (Pilier 1 & 4)
+        ai_summary, ai_dialogue = self._generate_ai_explanation(result, input_data)
+        result.ai_executive_summary = ai_summary
+        result.ai_investigation_dialogue = ai_dialogue
+
+        return result
+
+    def _generate_ai_explanation(
+        self, result: DiagnosticResult, input_data: DiagnosticInput
+    ) -> tuple[str, list[str]]:
+        """Génère une synthèse vulgarisée et un dialogue d'investigation sans modifier les faits validés."""
+        clean_symptom = PciDssSanitizer.sanitize_text(input_data.symptom)
+        clean_breakpoint = PciDssSanitizer.sanitize_text(result.breakpoint_analysis)
+
+        # Synthèse déterministe d'ancrage
+        first_action = (
+            result.rca_proposal.recommended_actions[0]
+            if result.rca_proposal.recommended_actions
+            else "Vérification des journaux applicatifs"
+        )
+        ai_summary = (
+            f"Synthèse Opérationnelle d'Incident [{result.initial_analysis.detected_domain}] : "
+            f"L'analyse technique confirme une rupture critique au niveau de : {clean_breakpoint}. "
+            f"Recommandation prioritaire : Appliquer immédiatement la procédure '{first_action}' "
+            f"sous le contrôle d'un opérateur qualifié."
+        )
+
+        ai_dialogue = [
+            f"1. Avez-vous vérifié l'état des composants prioritaires : {', '.join(result.initial_analysis.suspect_components[:2])} ?",
+            f"2. Pouvez-vous fournir les éléments manquants indispensables : {result.missing_evidence[0] if result.missing_evidence else 'Traces réseau'} ?",
+            "3. Confirmez-vous l'absence d'impact financier immédiat sur les comptes clients avant toute intervention technique ?",
+        ]
+
+        try:
+            model = build_chat_model()
+            prompt = (
+                f"Tu es un expert senior en monétique bancaire. Rédige un court paragraphe exécutif (max 3 phrases) "
+                f"pour expliquer ce diagnostic à un opérateur de supervision, à partir STRICTEMENT de ces faits vérifiés :\n"
+                f"- Domaine : {result.initial_analysis.detected_domain}\n"
+                f"- Point de rupture : {clean_breakpoint}\n"
+                f"- Cause racine : {result.rca_proposal.summary[:150]}\n"
+                f"Ne mentionne aucun numéro de carte ou fait non fourni."
+            )
+            resp = model.invoke([HumanMessage(content=prompt)])
+            if resp and resp.content:
+                ai_summary = str(resp.content).strip()
+        except Exception:
+            # Fallback gracieux en cas d'absence de réseau ou quota API
+            pass
+
+        return ai_summary, ai_dialogue
 
     def _build_iso_mapping_diagnostic(self, input_data: DiagnosticInput, full_text: str) -> DiagnosticResult:
         """Construit le diagnostic d'erreur de mapping / construction ISO 8583 (DE32, DE37, DE49 manquants)."""

@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from agentic.api.v1.analyses import router as analyses_router
+from agentic.api.v1.audit import router as audit_router
 from agentic.api.v1.code import router as code_router
 from agentic.api.v1.decoders import router as decoders_router
 from agentic.api.v1.diagnostic import router as diagnostic_router
@@ -19,6 +20,7 @@ app.include_router(analyses_router)
 app.include_router(code_router)
 app.include_router(diagnostic_router)
 app.include_router(decoders_router)
+app.include_router(audit_router)
 
 
 @app.get("/health", tags=["santé"], summary="État du service")

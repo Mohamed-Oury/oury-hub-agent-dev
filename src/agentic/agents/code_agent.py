@@ -18,6 +18,7 @@ from agentic.agents.analysis_agent import (
 from agentic.core import config
 from agentic.schemas.analysis import SubTask
 from agentic.schemas.code import GeneratedCodeResult
+from agentic.services.code_validator import CodeValidator
 
 _environment = Environment(
     loader=PackageLoader("agentic.prompts", "templates"),
@@ -66,5 +67,13 @@ def run_code_generation(system_prompt: str, sub_tasks: list[SubTask]) -> Generat
     output = state.get("structured_response")
     if not isinstance(output, GeneratedCodeResult):
         raise InvalidOutputError("Le modèle n'a renvoyé aucun code structuré.")
+
+    report_4gl = CodeValidator.validate_informix_4gl(output.code_4gl)
+    report_per = CodeValidator.validate_genero_per(output.code_per)
+    output.validation_report = {
+        "valid": report_4gl["valid"] and report_per["valid"],
+        "4gl": report_4gl,
+        "per": report_per,
+    }
 
     return output

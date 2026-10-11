@@ -16,6 +16,7 @@ from agentic.agents.analysis_agent import (
 from agentic.core import config
 from agentic.schemas.analysis import SubTask
 from agentic.schemas.flexcube_code import FlexcubeGeneratedCodeResult
+from agentic.services.code_validator import CodeValidator
 
 _environment = Environment(
     loader=PackageLoader("agentic.prompts", "templates"),
@@ -62,5 +63,13 @@ def run_flexcube_code_generation(
     output = state.get("structured_response")
     if not isinstance(output, FlexcubeGeneratedCodeResult):
         raise InvalidOutputError("Le modèle n'a renvoyé aucun code PL/SQL structuré.")
+
+    report_spec = CodeValidator.validate_flexcube_plsql(output.package_specification)
+    report_body = CodeValidator.validate_flexcube_plsql(output.package_body)
+    output.validation_report = {
+        "valid": report_spec["valid"] and report_body["valid"],
+        "specification": report_spec,
+        "body": report_body,
+    }
 
     return output

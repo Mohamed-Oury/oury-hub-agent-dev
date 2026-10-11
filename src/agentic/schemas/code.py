@@ -1,5 +1,6 @@
 """Schémas pour la génération de code 4GL et écran .per."""
 
+from typing import Any
 from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
 from pydantic.main import BaseModel
@@ -30,6 +31,9 @@ class GeneratedCodeResult(CamelModel):
     unit_test_script: list[str] = Field(
         default_factory=list, description="Scénarios de test unitaire."
     )
+    validation_report: dict[str, Any] | None = Field(
+        default=None, description="Rapport de validation syntaxique et des règles bancaires."
+    )
 
 
 class CodeResponse(CamelModel):
@@ -43,6 +47,7 @@ class CodeResponse(CamelModel):
     sql_script: str | None = Field(default=None, description="Script SQL.")
     compilation_instructions: list[str] = Field(default_factory=list)
     unit_test_script: list[str] = Field(default_factory=list)
+    validation_report: dict[str, Any] | None = Field(default=None)
     saved_path: str = Field(description="Chemin où le code est enregistré.")
 
     @classmethod
@@ -58,5 +63,6 @@ class CodeResponse(CamelModel):
             sql_script=result.sql_script,
             compilation_instructions=result.compilation_instructions,
             unit_test_script=result.unit_test_script,
+            validation_report=result.validation_report,
             saved_path=saved_path,
         )
